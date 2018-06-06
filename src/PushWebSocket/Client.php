@@ -72,4 +72,3 @@ class Client {
 		$this->isConnected = $isConnected;
 	}
 }
-?>

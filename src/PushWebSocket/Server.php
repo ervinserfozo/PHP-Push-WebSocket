@@ -55,6 +55,8 @@ class Server {
 	 */
 	private $verboseMode;
 
+	private $bytes = 0;
+
 	/**
 	 * Server constructor
 	 * @param $address The address IP or hostname of the server (default: 127.0.0.1).
@@ -92,6 +94,11 @@ class Server {
 	 * @param $socket
 	 */
 	private function connect($socket) {
+		if (is_null($socket)){
+
+			return;
+		}
+
 		$this->console("Creating client...");
 		$client = new \PushWebSocket\Client(uniqid(), $socket);
 		$this->clients[] = $client;
@@ -99,67 +106,103 @@ class Server {
 		$this->console("Client #{$client->getId()} is successfully created!");
 	}
 
-	/**
-	 * Do the handshaking between client and server
-	 * @param $client
-	 * @param $headers
-	 */
+
+    /**
+     * @param $headers
+     * @return bool
+     */
+    private function requestFilter($headers)
+    {
+        $this->console("Getting client WebSocket version...");
+
+        if(preg_match("/Sec-WebSocket-Version: (.*)\r\n/", $headers, $match)) {
+            $version = $match[1];
+        }
+        else {
+            $this->console("The client doesn't support WebSocket");
+            return false;
+        }
+
+        if($version != 13) {
+            $this->console("WebSocket version 13 required (the client supports version {$version})");
+            return false;
+        }
+
+        $this->console("Client WebSocket version is {$version}, (required: 13)");
+
+        return true;
+	}
+
+    /**
+     * Do the handshaking between client and server
+     * @param Client $client
+     * @param string $headers
+     * @return bool
+     */
 	private function handshake($client, $headers) {
-		$this->console("Getting client WebSocket version...");
-		if(preg_match("/Sec-WebSocket-Version: (.*)\r\n/", $headers, $match)) {
-			$version = $match[1];
-		}
-		else {
-			$this->console("The client doesn't support WebSocket");
-			return false;
-		}
 
-		$this->console("Client WebSocket version is {$version}, (required: 13)");
-		if($version == 13) {
-			// Extract header variables
-			$this->console("Getting headers...");
-			if(preg_match("/GET (.*) HTTP/", $headers, $match))
-				$root = $match[1];
-			if(preg_match("/Host: (.*)\r\n/", $headers, $match))
-				$host = $match[1];
-			if(preg_match("/Origin: (.*)\r\n/", $headers, $match))
-				$origin = $match[1];
-			if(preg_match("/Sec-WebSocket-Key: (.*)\r\n/", $headers, $match))
-				$key = $match[1];
+		$upgrade = $this->handshakeBuilder($headers);
 
-			$this->console("Client headers are:");
-			$this->console("\t- Root: ".$root);
-			$this->console("\t- Host: ".$host);
-			$this->console("\t- Origin: ".$origin);
-			$this->console("\t- Sec-WebSocket-Key: ".$key);
+		$this->console("Sending this response to the client #{$client->getId()}:\r\n".$upgrade);
 
-			$this->console("Generating Sec-WebSocket-Accept key...");
-			$acceptKey = $key.'258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
-			$acceptKey = base64_encode(sha1($acceptKey, true));
+		socket_write($client->getSocket(), $upgrade);
 
-			$upgrade = "HTTP/1.1 101 Switching Protocols\r\n".
-					   "Upgrade: websocket\r\n".
-					   "Connection: Upgrade\r\n".
-					   "Sec-WebSocket-Accept: $acceptKey".
-					   "\r\n\r\n";
+		$client->setHandshake(true);
 
-			$this->console("Sending this response to the client #{$client->getId()}:\r\n".$upgrade);
-			socket_write($client->getSocket(), $upgrade);
-			$client->setHandshake(true);
-			$this->console("Handshake is successfully done!");
-			return true;
-		}
-		else {
-			$this->console("WebSocket version 13 required (the client supports version {$version})");
-			return false;
+		$this->console("Handshake is successfully done!");
+
+		return true;
+
+	}
+
+    private function handshakeBuilder($headers)
+    {
+        $this->console("Generating Sec-WebSocket-Accept key...");
+        $acceptKey = $this->getWebSocketKeys($headers).'258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
+        $acceptKey = base64_encode(sha1($acceptKey, true));
+
+        return "HTTP/1.1 101 Switching Protocols\r\n".
+            "Upgrade: websocket\r\n".
+            "Connection: Upgrade\r\n".
+            "Sec-WebSocket-Accept: $acceptKey".
+            "\r\n\r\n";
+	}
+
+    private function getWebSocketKeys($headers)
+    {
+        if(preg_match("/Sec-WebSocket-Key: (.*)\r\n/", $headers, $match)){
+
+            return $match[1];
 		}
 	}
 
+    private function getHandshakeInfo($headers)
+    {
+        // Extract header variables
+		$this->console("Getting headers...");
+		if(preg_match("/GET (.*) HTTP/", $headers, $match))
+			$root = $match[1];
+		if(preg_match("/Host: (.*)\r\n/", $headers, $match))
+			$host = $match[1];
+		if(preg_match("/Origin: (.*)\r\n/", $headers, $match))
+			$origin = $match[1];
+
+		$key = $this->getWebSocketKeys($headers);
+
+		$this->console("Client headers are:");
+		$this->console("\t- Root: ".$root);
+		$this->console("\t- Host: ".$host);
+		$this->console("\t- Origin: ".$origin);
+		$this->console("\t- Sec-WebSocket-Key: ".$key);
+
+    }
+
 	/**
 	 * Disconnect a client and close the connection
-	 * @param $socket
+	 * @param Client $client
 	 */
-	private function disconnect($client) {
+	private function disconnect($client)
+	{
 		$this->console("Disconnecting client #{$client->getId()}");
 
 		$client->setIsConnected(false);
@@ -186,15 +229,21 @@ class Server {
 	/**
 	 * Get the client associated with the socket
 	 * @param $socket
-	 * @return A client object if found, if not false
+	 * @return Client|Null A client object if found, if not false
 	 */
-	private function getClientBySocket($socket) {
-		foreach($this->clients as $client)
-			if($client->getSocket() == $socket) {
-				$this->console("Client found");
-				return $client;
-			}
-		return false;
+	private function getClientBySocket($socket)
+	{
+		foreach($this->clients as $client) {
+
+			/** @var Client $client */
+            if ($client->getSocket() == $socket) {
+
+                $this->console("Client found");
+
+                return $client;
+            }
+        }
+		return null;
 	}
 
 	/**
@@ -202,12 +251,18 @@ class Server {
 	 * @param $client
 	 * @param $action
 	 */
-	private function action($client, $action) {
+	private function action($client, $action)
+	{
 		$action = $this->unmask($action);
+
 		$this->console("Performing action: ".$action);
+
 		if($action == "exit" || $action == "quit") {
+
 			$this->console("Killing a child process");
+
 			posix_kill($client->getPid(), SIGTERM);
+
 			$this->console("Process {$client->getPid()} is killed!");
 		}
 	}
@@ -216,84 +271,162 @@ class Server {
 	 * Run the server
 	 */
 	public function run() {
+
 		$this->console("Start running...");
+
 		$this->console("Open in a browser: websocket_client.html (http)");
+
 		while(true) {
+
 			$changed_sockets = $this->sockets;
 
-			if($changed_sockets) {
-				@socket_select($changed_sockets, $write = NULL, $except = NULL, 1);
-				foreach($changed_sockets as $socket) {
-					if($socket == $this->master) {
-						if(($acceptedSocket = socket_accept($this->master)) < 0) {
-							$this->console("Socket error: ".socket_strerror(socket_last_error($acceptedSocket)));
-						}
-						else {
-							$this->connect($acceptedSocket);
-						}
-					}
-					else {
-						$this->console("Finding the socket that associated to the client...");
-						$client = $this->getClientBySocket($socket);
-						if($client) {
-							$this->console("Receiving data from the client");
+			if(empty($changed_sockets)) {
 
-							$data = null;
-
-							while($bytes = @socket_recv($socket, $r_data, 2048, MSG_DONTWAIT)) {
-								$data .= $r_data;
-							}
-
-							if(!$client->getHandshake()) {
-								$this->console("Doing the handshake");
-								if($this->handshake($client, $data)) {
-									$this->startProcess($client);
-								}
-								else {
-									$this->disconnect($client);
-								}
-							}
-							elseif($bytes === 0) {
-								$this->disconnect($client);
-							}
-							else {
-								// When received data from client
-								$this->action($client, $data);
-							}
-						}
-					}
-				}
+				continue;
 			}
+
+			@socket_select($changed_sockets, $write = NULL, $except = NULL, 1);
+
+			foreach($changed_sockets as $socket) {
+
+				if($socket == $this->master) {
+
+                    $acceptedSocket = $this->getAcceptedSocket();
+
+                    $this->connect($acceptedSocket);
+
+					continue;
+				}
+
+				$this->connectClient($socket);
+			}
+
 		}
+	}
+
+    private function getAcceptedSocket()
+    {
+        if(($acceptedSocket = socket_accept($this->master)) < 0) {
+
+            $this->console("Socket error: ".socket_strerror(socket_last_error($acceptedSocket)));
+
+            return false;
+        }
+
+		return $acceptedSocket;
+	}
+
+    private function connectClient($socket)
+    {
+        $this->console("Finding the socket that associated to the client...");
+
+        $client = $this->getClientBySocket($socket);
+
+        if(!$client) {
+
+        	return;
+        }
+
+        $this->console("Receiving data from the client");
+
+        $data = $this->collectData($socket);
+
+        if(!$client->getHandshake()) {
+
+            $this->attemptHandshake($client,$data);
+
+            return;
+        }
+
+        if($this->bytes === 0) {
+
+            $this->disconnect($client);
+
+            return;
+        }
+
+        // When received data from client
+        $this->action($client, $data);
+	}
+
+    private function attemptHandshake($client,$data)
+    {
+        $this->console("Doing the handshake");
+
+        if(!$this->requestFilter($data)) {
+
+            $this->disconnect($client);
+
+            return;
+        }
+
+        $this->handshake($client, $data);
+
+        $this->getHandshakeInfo($data);
+
+        $this->startProcess($client);
+
+        return;
+	}
+
+    private function collectData($socket)
+    {
+        $data = null;
+
+		while ($this->receiveSocket($socket,$r_data)) {
+            $data .= $r_data;
+		}
+
+        return $data;
+	}
+
+    private function receiveSocket($socket,&$r_data)
+    {
+        if($this->bytes = @socket_recv($socket, $r_data, 2048, MSG_DONTWAIT)) {
+
+			return true;
+        }
+
+        return false;
 	}
 
 	/**
 	 * Start a child process for pushing data
-	 * @param unknown_type $client
+	 * @param Client $client
 	 */
 	private function startProcess($client) {
+
 		$this->console("Start a client process");
+
 		$pid = pcntl_fork();
+
 		if($pid == -1) {
+
 			die('could not fork');
 		}
-		elseif($pid) { // process
+
+		if($pid) { // process
+
 			$client->setPid($pid);
+
+			return;
 		}
-		else {
-			// we are the child
-			while(true) {
 
-				// check if the client is connected
-				if(!$client->isConnected()){
-					break;
-				}
+		// we are the child
+		while(true) {
 
-				// push something to the client
-				$seconds = rand(2, 5);
-				$this->send($client, "I am waiting {$seconds} seconds");
-				sleep($seconds);
+			// check if the client is connected
+			if(!$client->isConnected()){
+
+				break;
 			}
+
+			// push something to the client
+			$seconds = rand(2, 5);
+
+			$this->send($client, "I am waiting {$seconds} seconds");
+
+			sleep($seconds);
 		}
 	}
 
