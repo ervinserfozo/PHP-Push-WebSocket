@@ -40,7 +40,11 @@ class Client {
 		return $this->socket;
 	}
 
-	public function getHandshake() {
+    public function hasSocket() {
+	    return !empty($this->socket);
+    }
+
+	public function isHandshakeDone() {
 		return $this->handshake;
 	}
 

@@ -45,7 +45,7 @@ class Server {
 
 	/**
 	 * The array of connected clients
-	 * @var Array of clients
+	 * @var array of clients
 	 */
 	private $clients;
 
@@ -62,7 +62,8 @@ class Server {
 	 * @param $address The address IP or hostname of the server (default: 127.0.0.1).
 	 * @param $port The port for the master socket (default: 5001)
 	 */
-	public function __construct($address = '127.0.0.1', $port = 5001, $verboseMode = false) {
+	public function __construct($address = '127.0.0.1', $port = 5001, $verboseMode = false)
+	{
 		$this->console("Server starting...");
 		$this->address = $address;
 		$this->port = $port;
@@ -93,17 +94,30 @@ class Server {
 	 * Create a client object with its associated socket
 	 * @param $socket
 	 */
-	private function connect($socket) {
+	private function addClient($socket)
+	{
 		if (is_null($socket)){
 
 			return;
 		}
 
 		$this->console("Creating client...");
+
 		$client = new \PushWebSocket\Client(uniqid(), $socket);
+
 		$this->clients[] = $client;
-		$this->sockets[] = $socket;
+
 		$this->console("Client #{$client->getId()} is successfully created!");
+	}
+
+    private function addSocket($socket)
+    {
+        if (is_null($socket)){
+
+            return;
+        }
+
+        $this->sockets[] = $socket;
 	}
 
 
@@ -111,7 +125,7 @@ class Server {
      * @param $headers
      * @return bool
      */
-    private function requestFilter($headers)
+    private function isRequestValid($headers)
     {
         $this->console("Getting client WebSocket version...");
 
@@ -139,7 +153,8 @@ class Server {
      * @param string $headers
      * @return bool
      */
-	private function handshake($client, $headers) {
+	private function handshake($client, $headers)
+	{
 
 		$upgrade = $this->handshakeBuilder($headers);
 
@@ -176,7 +191,7 @@ class Server {
 		}
 	}
 
-    private function getHandshakeInfo($headers)
+    private function printHandshakeInfo($headers)
     {
         // Extract header variables
 		$this->console("Getting headers...");
@@ -205,27 +220,34 @@ class Server {
 	{
 		$this->console("Disconnecting client #{$client->getId()}");
 
-		$client->setIsConnected(false);
+        $this->removeClient($client);
 
-		$i = array_search($client, $this->clients);
-		$j = array_search($client->getSocket(), $this->sockets);
+		if(!$client->hasSocket()) {
 
-		if($j >= 0) {
-			if($client->getSocket()) {
-				array_splice($this->sockets, $j, 1);
-				socket_shutdown($client->getSocket(), 2);
-				socket_close($client->getSocket());
-				$this->console("Socket closed");
-			}
+			return;
 		}
 
-		if($i >= 0) {
-			array_splice($this->clients, $i, 1);
-		}
+        @socket_shutdown($client->getSocket(), 2);
+
+        @socket_close($client->getSocket());
+
+        $this->console("Socket closed");
+
+        $this->removeSocket($client->getSocket());
 
 		$this->console("Client #{$client->getId()} disconnected");
 	}
 
+    private function removeClient($client)
+    {
+		$this->clients = array_diff($this->clients,array($client));
+	}
+
+	private function removeSocket($client)
+    {
+		$this->clients = array_diff($this->clients,array($client));
+	}
+	
 	/**
 	 * Get the client associated with the socket
 	 * @param $socket
@@ -233,6 +255,8 @@ class Server {
 	 */
 	private function getClientBySocket($socket)
 	{
+        $this->console("Finding the socket that associated to the client...");
+
 		foreach($this->clients as $client) {
 
 			/** @var Client $client */
@@ -247,24 +271,35 @@ class Server {
 	}
 
 	/**
-	 * Do an action
-	 * @param $client
-	 * @param $action
+	 * Get the client associated with the socket
+	 * @param $socket
+	 * @return array A client object if found, if not false
 	 */
-	private function action($client, $action)
+	private function getClientsBySocket($socket)
 	{
-		$action = $this->unmask($action);
+        $this->console("Finding the socket that associated to the client...");
 
-		$this->console("Performing action: ".$action);
+        $clients = array();
 
-		if($action == "exit" || $action == "quit") {
+		foreach($this->clients as $client) {
 
-			$this->console("Killing a child process");
+			/** @var Client $client */
+            if ($client->getSocket() == $socket) {
 
-			posix_kill($client->getPid(), SIGTERM);
+                $this->console("Client found");
 
-			$this->console("Process {$client->getPid()} is killed!");
-		}
+                $clients[] = $client;
+            }
+        }
+
+		return $clients;
+	}
+
+
+
+    private function isConnectionTerminated($data)
+    {
+		return $data == "exit" || $data == "quit";
 	}
 
 	/**
@@ -289,11 +324,15 @@ class Server {
 
 			foreach($changed_sockets as $socket) {
 
-				if($socket == $this->master) {
+				if($this->isSocketMaster($socket)) {
+
+					$this->console('master socket!');
 
                     $acceptedSocket = $this->getAcceptedSocket();
 
-                    $this->connect($acceptedSocket);
+                    $this->addClient($acceptedSocket);
+
+                    $this->addSocket($acceptedSocket);
 
 					continue;
 				}
@@ -302,6 +341,63 @@ class Server {
 			}
 
 		}
+	}
+
+    private function connectClient($socket)
+    {
+        $client = $this->getClientBySocket($socket);
+
+        if(!$client) {
+
+            return;
+        }
+
+        $this->console("Receiving data from the client");
+
+        $data = $this->collectData($socket);
+
+        if($this->attemptHandshake($client,$data)) {
+
+            $this->startProcessForClient($client);
+
+            return;
+        }
+
+        if($this->bytes === 0) {
+
+            $this->disconnect($client);
+
+            return;
+        }
+
+        // When received data from client
+        $this->action($client, $data);
+    }
+
+    /**
+     * Do an action
+     * @param $client
+     * @param $action
+     */
+    private function action($client, $action)
+    {
+        $action = $this->unmask($action);
+
+        $this->console("Performing action: ".$action);
+
+        if($this->isConnectionTerminated($action)) {
+
+            $this->console("Killing a child process");
+
+            posix_kill($client->getPid(), SIGTERM);
+
+            $this->console("Process {$client->getPid()} is killed!");
+        }
+    }
+
+    private function isSocketMaster($socket)
+    {
+        return $socket == $this->master;
 	}
 
     private function getAcceptedSocket()
@@ -316,57 +412,35 @@ class Server {
 		return $acceptedSocket;
 	}
 
-    private function connectClient($socket)
+    /**
+     * @param Client $client
+     * @param string $data
+     * @return bool
+     */
+    private function attemptHandshake($client, $data)
     {
-        $this->console("Finding the socket that associated to the client...");
+        if($client->isHandshakeDone()){
 
-        $client = $this->getClientBySocket($socket);
+        	return false;
+		}
 
-        if(!$client) {
-
-        	return;
-        }
-
-        $this->console("Receiving data from the client");
-
-        $data = $this->collectData($socket);
-
-        if(!$client->getHandshake()) {
-
-            $this->attemptHandshake($client,$data);
-
-            return;
-        }
-
-        if($this->bytes === 0) {
-
-            $this->disconnect($client);
-
-            return;
-        }
-
-        // When received data from client
-        $this->action($client, $data);
-	}
-
-    private function attemptHandshake($client,$data)
-    {
         $this->console("Doing the handshake");
 
-        if(!$this->requestFilter($data)) {
+        if(!$this->isRequestValid($data)) {
 
             $this->disconnect($client);
 
-            return;
+            return false;
         }
 
-        $this->handshake($client, $data);
+        if($this->handshake($client, $data)) {
 
-        $this->getHandshakeInfo($data);
+            $this->printHandshakeInfo($data);
 
-        $this->startProcess($client);
+            return true;
+        }
 
-        return;
+        return false;
 	}
 
     private function collectData($socket)
@@ -394,7 +468,7 @@ class Server {
 	 * Start a child process for pushing data
 	 * @param Client $client
 	 */
-	private function startProcess($client) {
+	private function startProcessForClient($client) {
 
 		$this->console("Start a client process");
 
@@ -436,10 +510,15 @@ class Server {
 	 * @param $text
 	 */
 	private function send($client, $text) {
+
 		$this->console("Send '".$text."' to client #{$client->getId()}");
+
 		$text = $this->encode($text);
+
 		if(socket_write($client->getSocket(), $text, strlen($text)) === false) {
+
 			$this->console("Unable to write to client #{$client->getId()}'s socket");
+
 			$this->disconnect($client);
 		}
 	}
