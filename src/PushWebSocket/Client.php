@@ -23,6 +23,7 @@ class Client {
 	private $handshake;
 	private $pid;
 	private $isConnected;
+	private $connectedToUser = null;
 
 	public function __construct($id, $socket) {
 		$this->id = $id;
@@ -75,4 +76,22 @@ class Client {
 	public function setIsConnected($isConnected) {
 		$this->isConnected = $isConnected;
 	}
+
+    /**
+     * @return bool
+     */
+    public function getConnectedToUser()
+    {
+        return $this->connectedToUser;
+    }
+
+    /**
+     * @param bool $connectedToUser
+     */
+    public function setConnectedToUser($connectedToUser)
+    {
+        $this->connectedToUser = $connectedToUser;
+    }
+
+
 }

@@ -12,11 +12,18 @@ window.onbeforeunload = function() {
 };
 
 window.onload = function() {
+    var clientId = connectToExistingUser();
 	try {
 		ws = new WebSocket(url);
 		write('Connecting... (readyState '+ws.readyState+')');
 		ws.onopen = function(msg) {
 			write('Connection successfully opened (readyState ' + this.readyState+')');
+			console.log(clientId);
+            if(!clientId){
+                return;
+			}
+
+			ws.send('client_id='+clientId);
 		};
 		ws.onmessage = function(msg) {
 			write('Server says: '+msg.data);
@@ -37,6 +44,12 @@ window.onload = function() {
 		write(exception);
 	}
 };
+
+function connectToExistingUser(){
+    var url = new URL(window.location.href);
+
+    return url.searchParams.get("client_id")
+}
 
 function write(text) {
 	var date = new Date();

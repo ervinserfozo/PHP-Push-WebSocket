@@ -57,11 +57,12 @@ class Server {
 
 	private $bytes = 0;
 
-	/**
-	 * Server constructor
-	 * @param $address The address IP or hostname of the server (default: 127.0.0.1).
-	 * @param $port The port for the master socket (default: 5001)
-	 */
+    /**
+     * Server constructor
+     * @param string $address The address IP or hostname of the server (default: 127.0.0.1).
+     * @param int $port The port for the master socket (default: 5001)
+     * @param bool $verboseMode
+     */
 	public function __construct($address = '127.0.0.1', $port = 5001, $verboseMode = false)
 	{
 		$this->console("Server starting...");
@@ -90,25 +91,32 @@ class Server {
 		$this->console("Server started on {$this->address}:{$this->port}");
 	}
 
-	/**
-	 * Create a client object with its associated socket
-	 * @param $socket
-	 */
-	private function addClient($socket)
+    /**
+     * Create a client object with its associated socket
+     * @param Client $client
+     * @return null|Client
+     */
+	private function addClient($client)
 	{
-		if (is_null($socket)){
-
-			return;
-		}
-
-		$this->console("Creating client...");
-
-		$client = new \PushWebSocket\Client(uniqid(), $socket);
-
 		$this->clients[] = $client;
 
 		$this->console("Client #{$client->getId()} is successfully created!");
+
+		return $client;
 	}
+
+
+    private function createClient($socket)
+    {
+        if (is_null($socket)){
+
+            return null;
+        }
+
+        $this->console("Creating client...");
+
+        return new \PushWebSocket\Client(uniqid(), $socket);
+    }
 
     private function addSocket($socket)
     {
@@ -238,14 +246,26 @@ class Server {
 		$this->console("Client #{$client->getId()} disconnected");
 	}
 
-    private function removeClient($client)
+
+    /**
+     * @param Client $clientToBeRemoved
+     */
+    private function removeClient($clientToBeRemoved)
     {
-		$this->clients = array_diff($this->clients,array($client));
+        foreach ($this->clients as $key => $client) {
+
+			if ($client->getId() === $clientToBeRemoved->getId()){
+
+				unset($this->clients[$key]);
+			}
+		}
 	}
 
-	private function removeSocket($client)
+	private function removeSocket($socketToBeRemoved)
     {
-		$this->clients = array_diff($this->clients,array($client));
+        $socketArray = array($socketToBeRemoved);
+
+		$this->sockets = array_diff($this->sockets,$socketArray);
 	}
 	
 	/**
@@ -314,7 +334,8 @@ class Server {
 		while(true) {
 
 			$changed_sockets = $this->sockets;
-
+			$this->console('number of clients:'.count($this->clients));
+			$this->console('number of sockets:'.count($this->sockets));
 			if(empty($changed_sockets)) {
 
 				continue;
@@ -343,45 +364,122 @@ class Server {
 
         $acceptedSocket = $this->getAcceptedSocket();
 
-        $this->addClient($acceptedSocket);
+        $client = $this->createClient($acceptedSocket);
+
+        $this->addClient($client);
 
         $this->addSocket($acceptedSocket);
 	}
 
     private function connectClient($socket)
     {
-        $client = $this->getClientBySocket($socket);
+        $clients = $this->getClientsBySocket($socket);
 
-        if(!$client) {
+        foreach ($clients as $client) {
+        	
+            if(!$client) {
 
-            return;
+                return;
+            }
+
+            $this->console("Receiving data from the client");
+
+            $data = $this->collectData($socket);
+
+            if($this->attemptHandshake($client,$data)) {
+
+                $this->startProcessForClient($client);
+
+                return;
+            }
+            else{
+
+                if ($this->connectWithExistingClient($client,$data)){
+
+                    return;
+                }
+            }
+
+            if($this->bytes === 0) {
+
+                $this->disconnect($client);
+
+                return;
+            }
+
+            // When received data from client
+            $this->action($client, $data);
         }
 
-        $this->console("Receiving data from the client");
 
-        $data = $this->collectData($socket);
-
-        if($this->attemptHandshake($client,$data)) {
-
-            $this->startProcessForClient($client);
-
-            return;
-        }
-
-        if($this->bytes === 0) {
-
-            $this->disconnect($client);
-
-            return;
-        }
-
-        // When received data from client
-        $this->action($client, $data);
     }
 
     /**
+     * @param Client $newClient
+     * @param $data
+     * @return bool
+     */
+    private function connectWithExistingClient($newClient,$data)
+    {
+    	$clientId = $this->getClientId($data);
+
+        $this->console('attempt connection to existing user:'.$clientId);
+
+    	if(is_null($clientId)){
+
+    		return;
+		}
+
+    	if($newClient->getConnectedToUser() == $clientId){
+
+    		return;
+		}
+
+    	/** @var Client $client */
+        foreach ($this->clients as $client) {
+
+			if ($client->getId() == $clientId){
+
+				$this->killProcess($newClient);
+
+				$this->removeClient($newClient);
+
+				$this->removeSocket($newClient->getSocket());
+
+				$client = $this->createClient($client->getSocket());
+
+				$client->setHandshake(true);
+
+				$client->setConnectedToUser($clientId);
+
+				$this->addClient($client);
+
+				return true;
+			}
+		}
+
+		return false;
+    }
+
+    /**
+     * @param $data
+     * @return mixed|null
+     */
+    private function getClientId($data)
+    {
+        $readableData = $this->unmask($data);
+
+        if(stripos($readableData,'client_id')===false){
+
+        	return null;
+		}
+
+		return end(explode('=',$readableData));
+	}
+
+    /**
      * Do an action
-     * @param $client
+     * @param Client $client
      * @param $action
      */
     private function action($client, $action)
@@ -392,12 +490,24 @@ class Server {
 
         if($this->isConnectionTerminated($action)) {
 
-            $this->console("Killing a child process");
+            $this->killProcess($client);
 
-            posix_kill($client->getPid(), SIGTERM);
+            $this->removeClient($client);
 
-            $this->console("Process {$client->getPid()} is killed!");
+            $this->removeSocket($client->getSocket());
         }
+    }
+
+    /**
+     * @param Client $client
+     */
+    private function killProcess($client)
+    {
+        $this->console("Killing a child process");
+
+        posix_kill($client->getPid(), SIGTERM);
+
+        $this->console("Process {$client->getPid()} is killed!");
     }
 
     private function isSocketMaster($socket)
@@ -528,11 +638,12 @@ class Server {
 		}
 	}
 
-	/**
-	 * Encode a text for sending to clients via ws://
-	 * @param $text
-	 * @param $messageType
-	 */
+    /**
+     * Encode a text for sending to clients via ws://
+     * @param $message
+     * @param string $messageType
+     * @return string
+     */
 	function encode($message, $messageType='text') {
 
 		switch ($messageType) {
@@ -606,10 +717,11 @@ class Server {
 	}
 
 
-	/**
-	 * Unmask a received payload
-	 * @param $buffer
-	 */
+    /**
+     * Unmask a received payload
+     * @param $payload
+     * @return string
+     */
 	private function unmask($payload) {
 		$length = ord($payload[1]) & 127;
 
@@ -635,8 +747,8 @@ class Server {
 
 	/**
 	 * Print a text to the terminal
-	 * @param $text the text to display
-	 * @param $exit if true, the process will exit
+	 * @param string $text the text to display
+	 * @param bool $exit if true, the process will exit
 	 */
 	private function console($text, $exit = false) {
 		$text = date('[Y-m-d H:i:s] ').$text."\r\n";
