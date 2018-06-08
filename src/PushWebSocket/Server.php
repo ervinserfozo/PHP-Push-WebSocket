@@ -326,13 +326,7 @@ class Server {
 
 				if($this->isSocketMaster($socket)) {
 
-					$this->console('master socket!');
-
-                    $acceptedSocket = $this->getAcceptedSocket();
-
-                    $this->addClient($acceptedSocket);
-
-                    $this->addSocket($acceptedSocket);
+					$this->initialConnection();
 
 					continue;
 				}
@@ -341,6 +335,17 @@ class Server {
 			}
 
 		}
+	}
+
+    private function initialConnection()
+    {
+        $this->console('master socket!');
+
+        $acceptedSocket = $this->getAcceptedSocket();
+
+        $this->addClient($acceptedSocket);
+
+        $this->addSocket($acceptedSocket);
 	}
 
     private function connectClient($socket)
