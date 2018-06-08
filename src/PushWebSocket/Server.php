@@ -90,24 +90,27 @@ class Server {
 		$this->console("Server started on {$this->address}:{$this->port}");
 	}
 
-	/**
-	 * Create a client object with its associated socket
-	 * @param $socket
-	 */
-	private function addClient($socket)
+    /**
+     * Create a client object with its associated socket
+     * @param Client $client
+     */
+	private function addClient($client)
 	{
-		if (is_null($socket)){
-
-			return;
-		}
-
-		$this->console("Creating client...");
-
-		$client = new \PushWebSocket\Client(uniqid(), $socket);
-
 		$this->clients[] = $client;
 
 		$this->console("Client #{$client->getId()} is successfully created!");
+	}
+
+    private function createClient($socket)
+    {
+        if (is_null($socket)){
+
+            return;
+        }
+
+        $this->console("Creating client...");
+
+        return new \PushWebSocket\Client(uniqid(), $socket);
 	}
 
     private function addSocket($socket)
@@ -343,7 +346,9 @@ class Server {
 
         $acceptedSocket = $this->getAcceptedSocket();
 
-        $this->addClient($acceptedSocket);
+        $client = $this->createClient($acceptedSocket);
+
+        $this->addClient($client);
 
         $this->addSocket($acceptedSocket);
 	}
