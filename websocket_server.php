@@ -23,7 +23,7 @@ require_once __DIR__ . '/vendor/autoload.php'; // Autoload files using Composer 
 set_time_limit(0);
 
 // variables
-$address = '192.168.56.50';
+$address = '192.168.0.52';
 $port = 5001;
 $verboseMode = true;
 

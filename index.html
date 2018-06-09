@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>Test - PHP Push WebSocket</title>
+<meta charset="utf-8" />
+
+<script type="text/javascript">
+var ws, url = 'ws://192.168.0.52:5001';
+
+var myId,clientId;
+
+
+window.onbeforeunload = function() {
+	ws.send('quit');
+};
+
+window.onload = function() {
+    clientId = connectToExistingUser();
+	try {
+		ws = new WebSocket(url);
+		write('Connecting... (readyState '+ws.readyState+')');
+		ws.onopen = function(msg) {
+
+			write('Connection successfully opened (readyState ' + this.readyState+')');
+
+            if(!clientId){
+                return;
+			}
+			var jsonResponse = generateResponse(clientId,null,true);
+			ws.send(jsonResponse);
+		};
+
+		ws.onmessage = function(msg) {
+		    if(myId){
+		        myId = msg.data;
+			}
+			write(msg.data);
+		};
+
+		ws.onclose = function(msg) {
+
+			if(this.readyState == 2)
+				write('Closing... The connection is going throught the closing handshake (readyState '+this.readyState+')');
+
+			else if(this.readyState == 3)
+				write('Connection closed... The connection has been closed or could not be opened (readyState '+this.readyState+')');
+
+			else
+				write('Connection closed... (unhandled readyState '+this.readyState+')');
+		};
+		ws.onerror = function(event) {
+			terminal.innerHTML = '<li style="color: red;">'+event.data+'</li>'+terminal.innerHTML;
+		};
+	}
+	catch(exception) {
+		write(exception);
+	}
+};
+
+function generateResponse(receiverId,data,connectToReceiver = true) {
+
+    return JSON.stringify( {
+        receiver: clientId,
+        message: data,
+        connectToReceiver: connectToReceiver
+    });
+}
+
+
+function connectToExistingUser(){
+    var url = new URL(window.location.href);
+
+    return url.searchParams.get("client_id")
+}
+
+function write(text) {
+	var date = new Date();
+	var dateText = '['+date.getFullYear()+'-'+date.getMonth()+'-'+(date.getDate() > 9 ? date.getDate() : '0'+date.getDate())+' '+(date.getHours() > 9 ? date.getHours() : '0'+date.getHours())+':'+(date.getMinutes() > 9 ? date.getMinutes() : '0'+date.getMinutes())+':'+(date.getSeconds() > 9 ? date.getSeconds() : '0'+date.getSeconds())+']';
+	var terminal = document.getElementById('terminal');
+	terminal.innerHTML = '<li>'+dateText+' '+text+'</li>'+terminal.innerHTML;
+}
+</script>
+<button onclick="ws.send(generateResponse(clientId,'Hi you!Based on your input, get a random alpha numeric string. The random string generator creates a series of numbers and letters that have no pattern. These can be helpful for creating security codes.\n'+
+'\n'+
+'\n'+
+'With this utility you generate a 16 character output based on your input of numbers and upper and lower case letters.  Random strings can be unique. Used in computing, a random string generator can also be called a random character string generator. This is an important tool if you want to generate a unique set of strings. The utility generates a sequence that lacks a pattern and is random.\n'+
+'\n'+
+'\n'+
+'Throughout time, randomness was generated through mechanical devices such as dice, coin flips, and playing cards. A mechanical method of achieving randomness can be more time and resource consuming especially when a large number of randomized strings are needed as they could be in statistical applications.  Computational random string generators replace the traditional mechanical devices. \n'+
+'\n'+
+'\n'+
+'Possible applications for a random string generator could be for statistical sampling, simulations, and cryptography.  For security reasons, a random string generator can be useful. \n'+
+'\n'+
+'\n'+
+'The generation of this type of random string can be a common or typical task in computer programming.  Some forms of randomness concern hash or seach algorithms.  Another task that is random concerns selecting music tracks.\n'+
+'\n'+
+'\n'+
+'In statistical theory, randomization is an important principle with one possible application involving survey sampling.\n'+
+'\n'+
+'\n'+
+'Many applications of randomization have caused several methods to exist for generating random data. Lottery games is one current application. Slot machine odds are another use of random number generators.\n'+
+'\n'))">Send Hi</button>
+</head>
+<body>
+	<a href="/" target="_blank">Add another client</a>
+	<p id="my-id"></p>
+	<ul id="terminal"></ul>
+</body>
+</html>
+

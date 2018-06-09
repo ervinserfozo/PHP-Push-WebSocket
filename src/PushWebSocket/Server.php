@@ -341,7 +341,10 @@ class Server {
 	}
 
 
-
+    /**
+     * @param $data
+     * @return bool
+     */
     private function isConnectionTerminated($data)
     {
 		return $data == "exit" || $data == "quit";
@@ -380,8 +383,6 @@ class Server {
 
 				$this->connectClient($socket);
 			}
-
-
 		}
 	}
 
@@ -398,6 +399,9 @@ class Server {
         $this->addSocket($acceptedSocket);
 	}
 
+    /**
+     * @param $socket
+     */
     private function connectClient($socket)
     {
         $client = $this->getClientBySocket($socket);
@@ -413,7 +417,9 @@ class Server {
 
         $data = $this->collectData($socket);
 
-        $this->connectWithExistingClient($client,$data);
+        $message = $this->getResponse($data);
+
+        $this->connectWithExistingClient($client,$message);
 
         /** @var Client $client */
         foreach ($clients as $client) {
@@ -425,7 +431,7 @@ class Server {
 
             if($this->attemptHandshake($client,$data)) {
 
-                $this->send($client,'Your id is: ' . $client->getId());
+                $this->send($client,$client->getId());
                 //$this->startProcessForClient($client);
 
                 return;
@@ -438,14 +444,13 @@ class Server {
                 return;
             }
 
-
             // When received data from client
-            if ($this->action($client, $data)){
+            if ($this->action($client, $message)){
 
             	return;
 			}
 
-            $this->messaging($client, $data);
+            $this->messaging($client, $message);
         }
 
 
@@ -453,14 +458,19 @@ class Server {
 
     /**
      * @param Client $newClient
-     * @param $data
+     * @param  Response $data
      * @return bool
      */
     private function connectWithExistingClient($newClient,$data)
     {
-    	$clientId = $this->getClientIdFromRequest($data);
+    	$clientId = $data->getReceiver();
 
     	if(is_null($clientId)){
+
+    		return;
+		}
+
+		if (!$data->getConnectToReceiver()){
 
     		return;
 		}
@@ -506,16 +516,14 @@ class Server {
     /**
      * Do an action
      * @param Client $client
-     * @param $action
+     * @param Response $action
      * @return bool
      */
     private function action($client, $action)
     {
-        $action = $this->unmask($action);
+        if($this->isConnectionTerminated($action->getData())) {
 
-        if($this->isConnectionTerminated($action)) {
-
-            $this->console("Performing action: ".$action);
+            $this->console("Performing action: ".$action->getData());
 
             $this->removeClient($client);
 
@@ -527,11 +535,13 @@ class Server {
         return false;
     }
 
-    private function messaging($client,$data)
-    {
-        $message = $this->unmask($data);
-
-        $this->send($client,$message);
+    /**
+     * @param Client $client
+     * @param Response $message
+     */
+    private function messaging($client, $message)
+	{
+        $this->send($client,$message->getData());
     }
 
     /**
@@ -546,11 +556,18 @@ class Server {
         $this->console("Process {$client->getPid()} is killed!");
     }
 
+    /**
+     * @param $socket
+     * @return bool
+     */
     private function isSocketMaster($socket)
     {
         return $socket == $this->master;
 	}
 
+    /**
+     * @return bool|resource
+     */
     private function getAcceptedSocket()
     {
         if(($acceptedSocket = socket_accept($this->master)) < 0) {
@@ -594,6 +611,11 @@ class Server {
         return false;
 	}
 
+
+    /**
+     * @param $socket
+     * @return null|string
+     */
     private function collectData($socket)
     {
         $this->console("Receiving data from the client");
@@ -797,6 +819,15 @@ class Server {
 		if($this->verboseMode) {
 			echo $text;
 		}
+	}
+
+    private function getResponse($data)
+    {
+    	$data = $this->unmask($data);
+
+    	$data = json_decode($data);
+
+		return new Response($data->receiver,$data->connectToReceiver,$data->message);
 	}
 }
 
