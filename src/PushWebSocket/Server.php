@@ -309,10 +309,35 @@ class Server {
                 $this->console("Client found");
 
                 $clients[] = $client;
+
+                return $clients;
             }
         }
 
 		return $clients;
+	}
+
+    /**
+     * Get the client associated with the socket
+     * @param string $clientId
+     * @return array A client object if found, if not false
+     */
+	private function getClientById($clientId)
+	{
+        $this->console("Finding the socket that associated to the client...");
+
+		foreach($this->clients as $client) {
+
+			/** @var Client $client */
+            if ($client->getId() == $clientId) {
+
+                $this->console("Client found");
+
+				return $client;
+            }
+        }
+
+		return null;
 	}
 
 
@@ -334,8 +359,7 @@ class Server {
 		while(true) {
 
 			$changed_sockets = $this->sockets;
-			$this->console('number of clients:'.count($this->clients));
-			$this->console('number of sockets:'.count($this->sockets));
+
 			if(empty($changed_sockets)) {
 
 				continue;
@@ -344,6 +368,8 @@ class Server {
 			@socket_select($changed_sockets, $write = NULL, $except = NULL, 1);
 
 			foreach($changed_sockets as $socket) {
+                $this->console('number of clients:'.count($this->clients));
+                $this->console('number of sockets:'.count($this->sockets));
 
 				if($this->isSocketMaster($socket)) {
 
@@ -354,6 +380,7 @@ class Server {
 
 				$this->connectClient($socket);
 			}
+
 
 		}
 	}
@@ -373,8 +400,22 @@ class Server {
 
     private function connectClient($socket)
     {
-        $clients = $this->getClientsBySocket($socket);
+        $client = $this->getClientBySocket($socket);
 
+        $clients[] = $client;
+
+        $connectedClient = $this->getClientById($client->getConnectedToUser());
+
+        if (!is_null($connectedClient)){
+
+        	$clients[] = $connectedClient;
+		}
+
+        $data = $this->collectData($socket);
+
+        $this->connectWithExistingClient($client,$data);
+
+        /** @var Client $client */
         foreach ($clients as $client) {
         	
             if(!$client) {
@@ -382,22 +423,12 @@ class Server {
                 return;
             }
 
-            $this->console("Receiving data from the client");
-
-            $data = $this->collectData($socket);
-
             if($this->attemptHandshake($client,$data)) {
 
-                $this->startProcessForClient($client);
+                $this->send($client,'Your id is: ' . $client->getId());
+                //$this->startProcessForClient($client);
 
                 return;
-            }
-            else{
-
-                if ($this->connectWithExistingClient($client,$data)){
-
-                    return;
-                }
             }
 
             if($this->bytes === 0) {
@@ -407,8 +438,14 @@ class Server {
                 return;
             }
 
+
             // When received data from client
-            $this->action($client, $data);
+            if ($this->action($client, $data)){
+
+            	return;
+			}
+			
+            $this->messaging($client, $data);
         }
 
 
@@ -421,51 +458,38 @@ class Server {
      */
     private function connectWithExistingClient($newClient,$data)
     {
-    	$clientId = $this->getClientId($data);
-
-        $this->console('attempt connection to existing user:'.$clientId);
+    	$clientId = $this->getClientIdFromRequest($data);
 
     	if(is_null($clientId)){
 
     		return;
 		}
 
+        $this->console('attempt connection to existing user:'.$clientId);
+
     	if($newClient->getConnectedToUser() == $clientId){
 
     		return;
 		}
 
-    	/** @var Client $client */
-        foreach ($this->clients as $client) {
+		/** @var Client $existingClient */
+		$existingClient = $this->getClientById($clientId);
 
-			if ($client->getId() == $clientId){
+    	if (!empty($existingClient)){
 
-				$this->killProcess($newClient);
+            $newClient->setConnectedToUser($clientId);
 
-				$this->removeClient($newClient);
+            $existingClient->setConnectedToUser($newClient->getId());
 
-				$this->removeSocket($newClient->getSocket());
-
-				$client = $this->createClient($client->getSocket());
-
-				$client->setHandshake(true);
-
-				$client->setConnectedToUser($clientId);
-
-				$this->addClient($client);
-
-				return true;
-			}
 		}
 
-		return false;
     }
 
     /**
      * @param $data
      * @return mixed|null
      */
-    private function getClientId($data)
+    private function getClientIdFromRequest($data)
     {
         $readableData = $this->unmask($data);
 
@@ -474,28 +498,40 @@ class Server {
         	return null;
 		}
 
-		return end(explode('=',$readableData));
+		$array = explode('=',$readableData);
+
+		return end($array);
 	}
 
     /**
      * Do an action
      * @param Client $client
      * @param $action
+     * @return bool
      */
     private function action($client, $action)
     {
         $action = $this->unmask($action);
 
-        $this->console("Performing action: ".$action);
-
         if($this->isConnectionTerminated($action)) {
 
-            $this->killProcess($client);
+            $this->console("Performing action: ".$action);
 
             $this->removeClient($client);
 
             $this->removeSocket($client->getSocket());
+
+            return true;
         }
+
+        return false;
+    }
+
+    private function messaging($client,$data)
+    {
+        $message = $this->unmask($data);
+
+        $this->send($client,$message);
     }
 
     /**
@@ -560,6 +596,8 @@ class Server {
 
     private function collectData($socket)
     {
+        $this->console("Receiving data from the client");
+
         $data = null;
 
 		while ($this->receiveSocket($socket,$r_data)) {
@@ -601,7 +639,7 @@ class Server {
 			return;
 		}
 
-		// we are the child
+		 we are the child
 		while(true) {
 
 			// check if the client is connected
