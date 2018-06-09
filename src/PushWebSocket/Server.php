@@ -444,7 +444,7 @@ class Server {
 
             	return;
 			}
-			
+
             $this->messaging($client, $data);
         }
 
@@ -639,7 +639,7 @@ class Server {
 			return;
 		}
 
-		 we are the child
+		//we are the child
 		while(true) {
 
 			// check if the client is connected
