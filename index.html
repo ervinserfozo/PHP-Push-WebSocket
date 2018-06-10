@@ -5,9 +5,43 @@
 <meta charset="utf-8" />
 
 <script type="text/javascript">
-var ws, url = 'ws://192.168.0.52:5001';
+var ws, url = 'ws://192.168.0.56:5001';
 
-var myId,clientId;
+var myId,clientId,gameCanvas,images,object;
+
+
+/**
+ * Created by Ervin on 18.3.2017..
+ */
+
+var Key = {
+    _pressed: {},
+
+    LEFT: 37,
+    UP: 38,
+    RIGHT: 39,
+    DOWN: 40,
+    SHOOT: 32,
+
+    isDown: function(keyCode) {
+        return this._pressed[keyCode];
+    },
+
+    onKeydown: function(event) {
+        this._pressed[event.keyCode] = true;
+    },
+
+    onKeyup: function(event) {
+        delete this._pressed[event.keyCode];
+    }
+};
+
+window.addEventListener('keyup', function(event) { Key.onKeyup(event); }, false);
+window.addEventListener('keydown', function(event) { Key.onKeydown(event); }, false);
+
+
+
+
 
 
 window.onbeforeunload = function() {
@@ -15,47 +49,127 @@ window.onbeforeunload = function() {
 };
 
 window.onload = function() {
+
+    /***
+     * image loader
+     */
+
+    function loadImages(sources, callback) {
+
+        var images = {};
+        var loadedImages = 0;
+        var numImages = 0;
+        // get num of sources
+        for(var src in sources) {
+            numImages++;
+        }
+        for(var src in sources) {
+            images[src] = new Image();
+            images[src].onload = function() {
+                if(++loadedImages >= numImages) {
+                    callback(images);
+                }
+            };
+            images[src].src = sources[src];
+        }
+    }
+
+    var sources = {
+        plane:'images/airplane.png',
+    };
+
+    loadImages(sources, function($images) {
+        images = $images;
+        gameCanvas = new render();
+        gameCanvas.init();
+        webSocket();
+    });
+
+
+    object =
+        {clippingX: 400,
+            clippingY: 400,
+            clippingWidth: 200,
+            clippingHeight: 165,
+            placeOnCanvasX: 400,
+            placeOnCanvasY: 200,
+            width:200,
+            height:120};
+
     clientId = connectToExistingUser();
-	try {
-		ws = new WebSocket(url);
-		write('Connecting... (readyState '+ws.readyState+')');
-		ws.onopen = function(msg) {
 
-			write('Connection successfully opened (readyState ' + this.readyState+')');
+	var webSocket = function () {
+		try {
+			ws = new WebSocket(url);
+			write('Connecting... (readyState '+ws.readyState+')');
+			ws.onopen = function(msg) {
 
-            if(!clientId){
-                return;
-			}
-			var jsonResponse = generateResponse(clientId,null,true);
-			ws.send(jsonResponse);
-		};
+				write('Connection successfully opened (readyState ' + this.readyState+')');
 
-		ws.onmessage = function(msg) {
-		    if(myId){
-		        myId = msg.data;
-			}
-			write(msg.data);
-		};
+				if(!clientId){
+					return;
+				}
+				var jsonResponse = generateResponse(clientId,null,true);
+				ws.send(jsonResponse);
 
-		ws.onclose = function(msg) {
+			};
 
-			if(this.readyState == 2)
-				write('Closing... The connection is going throught the closing handshake (readyState '+this.readyState+')');
+			ws.onmessage = function(msg) {
+				if(!myId){
+					myId = msg.data;
+					write(myId);
+				}
+                gameCanvas.clear();
 
-			else if(this.readyState == 3)
-				write('Connection closed... The connection has been closed or could not be opened (readyState '+this.readyState+')');
+                gameCanvas.renderCanvas(object);
+			};
 
-			else
-				write('Connection closed... (unhandled readyState '+this.readyState+')');
-		};
-		ws.onerror = function(event) {
-			terminal.innerHTML = '<li style="color: red;">'+event.data+'</li>'+terminal.innerHTML;
-		};
-	}
-	catch(exception) {
-		write(exception);
+			ws.onclose = function(msg) {
+
+				if(this.readyState == 2)
+					write('Closing... The connection is going throught the closing handshake (readyState '+this.readyState+')');
+
+				else if(this.readyState == 3)
+					write('Connection closed... The connection has been closed or could not be opened (readyState '+this.readyState+')');
+
+				else
+					write('Connection closed... (unhandled readyState '+this.readyState+')');
+			};
+			ws.onerror = function(event) {
+				terminal.innerHTML = '<li style="color: red;">'+event.data+'</li>'+terminal.innerHTML;
+			};
+		}
+		catch(exception) {
+			write(exception);
+		}
 	}
 };
+
+
+var render = function(){
+
+    var canvas = document.getElementById("canvas");
+    var ctx = canvas.getContext("2d");
+
+    this.init = function(){
+        canvas.width = 920;
+        canvas.height = 450;
+		ctx.mozImageSmoothingEnabled = false;
+		ctx.msImageSmoothingEnabled = false;
+		ctx.imageSmoothingEnabled = false;
+		ctx.globalAlpha=1;
+    }
+
+    this.clear = function () {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+    }
+
+    this.renderCanvas = function(object){
+
+        ctx.drawImage(images.plane, object.clippingX, object.clippingY,object.clippingWidth,object.clippingHeight,object.placeOnCanvasX, object.placeOnCanvasY,object.width, object.height);
+	};
+
+}
 
 function generateResponse(receiverId,data,connectToReceiver = true) {
 
@@ -102,6 +216,7 @@ function write(text) {
 '\n'))">Send Hi</button>
 </head>
 <body>
+	<canvas id="canvas"></canvas>
 	<a href="/" target="_blank">Add another client</a>
 	<p id="my-id"></p>
 	<ul id="terminal"></ul>

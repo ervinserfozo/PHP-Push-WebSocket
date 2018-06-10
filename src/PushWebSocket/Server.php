@@ -55,7 +55,15 @@ class Server {
 	 */
 	private $verboseMode;
 
+    /**
+     * @var int
+     */
 	private $bytes = 0;
+
+    /**
+     * @var ObjectLocator
+     */
+	private $objectLocator;
 
     /**
      * Server constructor
@@ -288,33 +296,6 @@ class Server {
             }
         }
 		return null;
-	}
-
-	/**
-	 * Get the client associated with the socket
-	 * @param $socket
-	 * @return array A client object if found, if not false
-	 */
-	private function getClientsBySocket($socket)
-	{
-        $this->console("Finding the socket that associated to the client...");
-
-        $clients = array();
-
-		foreach($this->clients as $client) {
-
-			/** @var Client $client */
-            if ($client->getSocket() == $socket) {
-
-                $this->console("Client found");
-
-                $clients[] = $client;
-
-                return $clients;
-            }
-        }
-
-		return $clients;
 	}
 
     /**
@@ -823,6 +804,10 @@ class Server {
 
     private function getResponse($data)
     {
+    	if(is_null($data)){
+    		return null;
+		}
+
     	$data = $this->unmask($data);
 
     	$data = json_decode($data);
