@@ -31,10 +31,11 @@ window.onload = function() {
 		};
 
 		ws.onmessage = function(msg) {
-		    if(myId){
+		    if(!myId){
 		        myId = msg.data;
+                write(msg.data);
 			}
-			write(msg.data);
+
 		};
 
 		ws.onclose = function(msg) {
